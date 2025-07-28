@@ -1,53 +1,86 @@
-# app.py
+# --- Standard Library Imports --- #
 import uuid
+
+# --- Third-party Library Imports --- #
 import streamlit as st
 from dotenv import load_dotenv
-from vector import VectorizeManager
 from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
+from google.api_core.exceptions import ResourceExhausted, TooManyRequests
+
+# --- Internal Module Imports --- #
+from vector import VectorizeManager
 from graph import build_langgraph_app
 
 
-# ------------- Session State Initialization ------------- #
 def initialize_session_state():
+    """
+    Initializes Streamlit session state variables if not already set.
+    Used to persist conversation history and thread context across reruns.
+    """
     st.session_state.setdefault("conversation", None)
     st.session_state.setdefault("chat_history", [])
     st.session_state.setdefault("thread_id", str(uuid.uuid4()))
+    st.session_state.setdefault("show_upload_warning", False)
 
 
-# ------------- User Input Handler ------------- #
 def handle_user_input(user_input: str):
-    app = st.session_state.conversation
-    thread_id = st.session_state.thread_id
+    """
+    Handles user input and updates the chat history.
+    Shows warning if no document has been uploaded or processed.
+    """
+    app = st.session_state.get("conversation", None)
+    thread_id = st.session_state.get("thread_id", str(uuid.uuid4()))
 
-    if not app:
-        st.warning("Please upload and process a document first.")
+    # Check for missing or unprocessed documents
+    if app is None:
+        st.session_state.show_upload_warning = True
         return
 
     user_msg = HumanMessage(content=user_input)
     config = {"configurable": {"thread_id": thread_id}}
 
     response_text = ""
-    for event in app.stream({"messages": [user_msg]}, config, stream_mode="values"):
-        response_text = event["messages"][-1].content
+    try:
+        for event in app.stream({"messages": [user_msg]}, config, stream_mode="values"):
+            response_text = event["messages"][-1].content
 
-    st.session_state.chat_history.extend(
-        [
-            ("user", user_input),
-            ("assistant", response_text),
-        ]
-    )
+        st.session_state.chat_history.extend(
+            [
+                ("user", user_input),
+                ("assistant", response_text),
+            ]
+        )
+
+    except ResourceExhausted:
+        fallback_msg = (
+            "I'm currently unavailable due to API quota limits. Please try again later."
+        )
+        st.session_state.chat_history.append(("assistant", fallback_msg))
+        st.error("❌ API quota has been exhausted.")
+
+    except TooManyRequests:
+        st.error("⚠️ Too many requests. You're being rate limited.")
+
+    except Exception as e:
+        st.error(f"Something went wrong: {str(e)}")
 
 
-# ------------- Render Chat History ------------- #
 def render_chat_history():
+    """
+    Renders the full chat history in the Streamlit UI.
+    Displays messages as chat bubbles.
+    """
     for role, msg in st.session_state.chat_history:
         with st.chat_message(role):
             st.markdown(msg)
 
 
-# ------------- Sidebar File Upload UI ------------- #
 def render_sidebar():
+    """
+    Renders the sidebar UI for uploading and processing documents.
+    Handles file uploads and initializes the vector store and conversation app.
+    """
     with st.sidebar:
         st.subheader("Your Documents")
         uploaded_docs = st.file_uploader(
@@ -58,12 +91,12 @@ def render_sidebar():
 
         if st.button("Process") and uploaded_docs:
             with st.spinner("Processing..."):
-                # Clear previous state
+                # Reset session state
                 st.session_state.conversation = None
                 st.session_state.chat_history = []
                 st.session_state.thread_id = str(uuid.uuid4())
 
-                # Process new documents
+                # Create vector store and initialize app
                 vector_manager = VectorizeManager(uploaded_docs)
                 vectorstore: Chroma = vector_manager.create_chromadb()
                 st.session_state.conversation = build_langgraph_app(vectorstore)
@@ -71,13 +104,19 @@ def render_sidebar():
             st.success("✅ Documents processed. You can now start chatting.")
 
 
-# ------------- Main App Entry ------------- #
 def main():
+    """
+    Main Streamlit app entry point.
+    Loads environment variables, initializes UI, and handles input.
+    """
     load_dotenv()
     st.set_page_config(page_title="Chat with Files", page_icon=":books:")
 
     initialize_session_state()
     st.title("📄 Chat with your Files")
+
+    if st.session_state.get("show_upload_warning"):
+        st.warning("⚠️ Please upload and process a document before asking questions.")
 
     render_chat_history()
 
