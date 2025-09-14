@@ -89,17 +89,32 @@ def render_sidebar():
             type=["pdf", "pptx", "ppt", "docx", "xlsx"],
         )
 
-        if st.button("Process") and uploaded_docs:
+        uploaded_link = st.text_input("Enter Url")
+
+        if st.button("Process") and (uploaded_docs or uploaded_link):
             with st.spinner("Processing..."):
                 # Reset session state
                 st.session_state.conversation = None
                 st.session_state.chat_history = []
                 st.session_state.thread_id = str(uuid.uuid4())
 
-                # Create vector store and initialize app
-                vector_manager = VectorizeManager(uploaded_docs)
-                vectorstore: Chroma = vector_manager.create_chromadb()
-                st.session_state.conversation = build_langgraph_app(vectorstore)
+                if uploaded_link:
+                    # loader = crawl_and_generate_sitemap(uploaded_link)
+                    vector_manager = VectorizeManager(link=uploaded_link)
+                    vectorstore: Chroma = vector_manager.create_chromadb()
+                    st.session_state.conversation = build_langgraph_app(vectorstore)
+
+                if uploaded_docs:
+                    vector_manager = VectorizeManager(files=uploaded_docs)
+                    vectorstore: Chroma = vector_manager.create_chromadb()
+                    st.session_state.conversation = build_langgraph_app(vectorstore)
+
+                if uploaded_link and uploaded_docs:
+                    vector_manager = VectorizeManager(
+                        files=uploaded_docs, link=uploaded_link
+                    )
+                    vectorstore = vector_manager.create_chromadb()
+                    st.session_state.conversation = build_langgraph_app(vectorstore)
 
             st.success("✅ Documents processed. You can now start chatting.")
 
