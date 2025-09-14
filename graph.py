@@ -23,6 +23,7 @@ def retrieve_docs(vectorstore: Chroma):
         Callable: A function that retrieves documents for the current RAGState.
     """
     retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    print(retriever)
 
     def _retrieve(state: RAGState):
         question = state["messages"][-1].content

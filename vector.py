@@ -7,7 +7,7 @@ from langchain.schema import Document
 
 # --- Internal Module Imports --- #
 from document_handler import DocumentsHandler
-from sitemap_generator import crawl_website
+from sitemap_generator import crawl_js_website
 
 
 class VectorizeManager(DocumentsHandler):
@@ -51,6 +51,7 @@ class VectorizeManager(DocumentsHandler):
 
         # Deferred import so asyncio is set up first
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from langchain_huggingface import HuggingFaceEmbeddings
 
         all_docs: list[Document] = []
 
@@ -61,14 +62,17 @@ class VectorizeManager(DocumentsHandler):
 
         # Process website link
         if self.link:
-            link_docs: list[Document] = crawl_website(self.link, max_pages=100)
+            link_docs: list[Document] = crawl_js_website(self.link, max_pages=100)
             all_docs.extend(link_docs)
 
         if not all_docs:
             raise ValueError("No documents available to build Chroma DB.")
 
         # Build vector store
-        embedding = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        # embedding = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        embedding = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2"
+        )
         vectorstore: Chroma = Chroma.from_documents(
             documents=all_docs, embedding=embedding
         )

@@ -1,73 +1,61 @@
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-from collections import deque
+from langchain_community.document_loaders import WebBaseLoader
 from langchain.schema import Document
+from urllib.parse import urljoin, urlparse
 
 
-def crawl_website(
-    start_url: str,
-    max_pages: int = 1,
-    timeout: int = 5,
-) -> list[Document]:
+def crawl_js_website(start_url: str, max_pages: int = 5) -> list[Document]:
     """
-    Crawl a website starting from a given URL and scrape content
-    into LangChain Document objects.
+    Crawl a JavaScript-rendered website (SPA) using WebBaseLoader,
+    and return LangChain Document objects for the parent page and nested URLs.
 
     Args:
         start_url (str): The URL to start crawling from.
         max_pages (int, optional): Maximum number of pages to crawl.
-        timeout (int, optional): Timeout for each request in seconds.
 
     Returns:
-        list[Document]: A list of Document objects with page content + metadata.
+        list[Document]: List of LangChain Documents containing page content.
     """
     visited = set()
-    queue = deque([start_url])
-    domain = urlparse(start_url).netloc
+    queue = [start_url]
     documents: list[Document] = []
 
     while queue and len(visited) < max_pages:
-        url = queue.popleft()
+        url = queue.pop(0)
         if url in visited:
             continue
+
         try:
-            response = requests.get(
-                url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"}
-            )
-            if response.status_code != 200:
-                continue
+            loader = WebBaseLoader(url)
+            docs: list[Document] = loader.load()
+            if docs:
+                documents.extend(docs)
 
             visited.add(url)
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            # Find internal links from the URL structure (SPA hash links)
+            parsed_url = urlparse(url)
+            # Example: convert "#/quickstart" to full URL
+            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            if "#" in url:
+                base = url.split("#")[0]
+            else:
+                base = url
 
-            # Extract visible text from important tags
-            texts = []
-            for tag in soup.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li"]):
-                text = tag.get_text(strip=True)
-                if text:
-                    texts.append(text)
-
-            page_content = "\n".join(texts).strip()
-            if page_content:
-                print(page_content)
-                documents.append(
-                    Document(page_content=page_content, metadata={"source": url})
-                )
-
-            # Enqueue same-domain links
-            for link in soup.find_all("a", href=True):
-                href = link["href"]
-                full_url = urljoin(url, href)
-                if urlparse(full_url).netloc == domain and full_url not in visited:
-                    queue.append(full_url)
+            for doc in docs:
+                # Extract hash-based links from the page content (simple approach)
+                for line in doc.page_content.splitlines():
+                    if line.startswith("#/") or line.startswith("/#"):
+                        full_url = urljoin(base_url, line.strip())
+                        if full_url not in visited and full_url not in queue:
+                            queue.append(full_url)
 
         except Exception as e:
-            print(f"Failed to fetch {url}: {e}")
+            print(f"Failed to load {url}: {e}")
 
     print(f"Crawled {len(visited)} pages → {len(documents)} documents created.")
     return documents
 
 
-# crawl_website(start_url="https://react.dev/reference/react")
+# Example usage:
+# docs = crawl_js_website("https://docsify.js.org/#", max_pages=10)
+# print(docs[0].page_content[:300])  # preview first doc
